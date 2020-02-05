@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta author>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>dependency graph</title>
+	<style>
+html, body {
+	margin:0;padding:0;
+}
+text {
+	fill: #000;
+	stroke: #fff;
+	stroke-width: 4px;
+	paint-order: stroke;
+	font-size: 0.8rem;
+	user-select: none;
+}
+.selected {fill: red; stroke-width: 2;}
+.linkSelected {stroke : red; }
+.connected {fill: orange; stroke-width: 2;}
+#textBox {
+	width: 30vw;
+	position: fixed;
+	display: grid;
+	right: 0;
+	grid-template-rows: 1.2rem 1.2rem 80vh 1.2rem;
+}
+#links {
+	resize: none;
+	white-space: pre;
+	background: #ffffff66;
+}
+
+	</style>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/5.15.0/d3.min.js"></script>
+	<script>
+/**
+ * Author : mafumafuultu
+ * License: MIT License
+ * URL: https://github.com/mafumafuultu/dependency_graph
+ */
+;
+const docOnLoad = v => typeof v === 'function'? document.onreadystatechange = () => document.readyState === 'complete' ? (body = document.body, v()) : void 0: v;
+const dataFormat = s => s.split(/\n|\r/g).map(v => v.trim()).filter((v, i, a) => v !== '' && a.indexOf(v) == i);
+
+const SAMPLE = 'from => to\na => b => d\na => c => d\na => e => f => d';
+const appender = (s, data, tag) => s.selectAll(tag).data(data).enter().append(tag);
+const toNodeItem = names => names.map(v => ({id: v}));
+const toLinkItem = links => links.map(link => link.split('=>').map(v => v.trim())).map(([source, target]) => ({source, target}));
+
+const isLink = v => 1 < v.length;
+const multiLinkMapper = x => 2 < x.length ? x.map((v,i,a) => i === 0 ? undefined : [a[i-1], v]) : [x];
+const empData = v => v != null;
+const linkMap = ([source, target]) => ({source, target});
+
+const toLinkItems = links => {
+	var tmp = links.map(s => s.split('=>').map(v => v.trim()));
+	return {
+		nodelist : toNodeItem(tmp.flatMap(v => v).filter((v, i, a) => a.indexOf(v) === i)),
+		linkdata : tmp.filter(isLink).map(multiLinkMapper).flat().filter(empData).map(linkMap)
+	};
+};
+
+
+/**
+ * ```js
+ * links = `
+ * from => to
+ * a => b => d
+ * a => c => d
+ * a => e => f => d
+ * `
+ * ```
+ * @param {String} links 
+ */
+function draw_dependency_graph(links) {
+	const {width, height} = visualViewport;
+	const size = {width : width- 8, height: height- 8};
+
+	d3.select('svg').remove();
+	const svg = d3.select(document.body).append('svg').attr('width', size.width).attr('height', size.height);
+	const zoomLayor = svg.append('g')
+	create_def_arrow(svg);
+
+	svg.call(d3.zoom().scaleExtent([1 / 2, 12]).on('zoom', zoomed))
+
+	var {nodelist, linkdata} = toLinkItems(links);
+
+	var link = appender(zoomLayor, linkdata, 'line')
+	.attr('marker-end', 'url(#link_arrow)')
+	.attr('stroke-width', 1)
+	.attr('stroke', '#99999999');
+
+	var texts = appender(zoomLayor, nodelist, 'text')
+	.text(d => d.id)
+	.call(d3.drag()
+		  .on('start', dragstarted)
+		  .on('drag', dragged)
+		  .on('end', dragended))
+	.on('click', marked);
+
+	var simulation = d3.forceSimulation()
+	.force('collide', d3.forceCollide().radius(50).strength(0.5).iterations(10))
+	.force('charge', d3.forceManyBody().strength(0.5))
+	.force('link', d3.forceLink().id(d => d.id).strength(0.5).distance(0.5).iterations(10))
+	.force('center', d3.forceCenter(size.width/2, size.height/2))
+	.force('r', d3.forceRadial().radius(size.height * 0.5 * 0.8).x(size.width*0.5).y(size.height*0.5).strength(0.5));
+
+	simulation.nodes(nodelist).on('tick', ticked);
+	simulation.force('link').links(linkdata).distance(100).iterations(10);
+	simulation.velocityDecay(0.2);
+
+	function ticked() {
+		texts
+			.attr('x', d => d.x)
+			.attr('y', d => d.y);
+		link
+			.attr('x1', d => d.source.x)
+			.attr('y1', d => d.source.y)
+			.attr('x2', d => d.target.x)
+			.attr('y2', d => d.target.y);
+	}
+
+	function dragstarted(d) {
+		if(!d3.event.active) simulation.alphaTarget(0.3).restart();
+		d.fx = d.x;
+		d.fy = d.y;
+	}
+
+	function dragged(d) {
+		d.fx = d3.event.x;
+		d.fy = d3.event.y;
+	}
+
+	function dragended(d) {
+		if(!d3.event.active) simulation.alphaTarget(0);
+		d.fx = null;
+		d.fy = null;
+	}
+
+	function marked(d) {
+		d3.selectAll('.selected').classed('selected', false);
+		d3.selectAll('.connected').classed('connected', false);
+		d3.selectAll('line').classed('linkSelected', false);
+
+		d3.select(this).classed('selected', true);
+
+		d3.selectAll("line")
+			.filter(function(v, i) {
+			if (d == v.source) {
+				texts.each(function(vj, j) {
+					if (v.target == vj) d3.select(this).classed("connected", true);
+				});
+				return true;
+			} else if(d == v.target) {
+				texts.each(function(vj, j) {
+					if (v.source == vj) d3.select(this).classed("connected", true);
+				});
+				return true;
+			}
+		}).classed("linkSelected", true);
+	}
+	function zoomed() {
+		zoomLayor.attr('transform', d3.zoomTransform(this))
+	}
+}
+function create_def_arrow (svg) {
+	svg.append('defs')
+		.append('marker')
+		.attr('id', 'link_arrow')
+		.attr('viewBox', '0 0 10 10')
+		.attr('refX', 10)
+		.attr('refY', 5)
+		.attr('markerWidth', 10)
+		.attr('markerHeight', 10)
+		.attr('orient', 'auto')
+		.append('path')
+		.attr('d', 'M10 5 0 0 0 10Z')
+		.attr('fill-rule', 'evenodd')
+		.attr('stroke', 'none')
+		.attr('fill', '#99999999');
+}
+
+docOnLoad(() => {
+	d3.select('#sample').on('click', () => {
+		d3.select('#links').property('value', SAMPLE)
+	});
+	d3.select('#draw').on('click', () => {
+		draw_dependency_graph(dataFormat(d3.select('#links').property('value')))
+	});
+});
+	</script>
+</head>
+<body>
+	<div id="textBox">
+		<button type="button" id='sample'>load sample</button>
+		<span>link list (from => to)</span>
+		<textarea name="" id="links"></textarea>
+		<button type="button" id='draw'>Draw</button>
+	</div>
+</body>
+</html>
